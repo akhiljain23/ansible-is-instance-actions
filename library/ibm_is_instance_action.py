@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+import requests
+import json
 from ibm_vpc import VpcV1
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from ibm_cloud_sdk_core.authenticators import BearerTokenAuthenticator
@@ -58,21 +60,16 @@ def run_module():
     if not module.params["instance_ip"] and not module.params["instance_id"] :
         module.fail_json(msg=("missing required arguments: pass instance_ip or instance_id"))
 
-    # authenticate using api-key
-    if module.params["ibmcloud_api_key"]:
-        authenticator = IAMAuthenticator(module.params["ibmcloud_api_key"])
-    elif module.params["bearer_token"]:
-        authenticator = BearerTokenAuthenticator(module.params["bearer_token"])
-    else:
-        authenticator = BearerTokenAuthenticator(module.params["env_bearer_token"])
 
-    service = VpcV1('2020-06-02', authenticator=authenticator)
+    listInstanceUrl = "https://us-south-stage01.iaasdev.cloud.ibm.com/v1/instances?generation=2&version=2020-08-11"
+    floatingIpUrl = "https://us-south-stage01.iaasdev.cloud.ibm.com/v1/floating_ips?version=2021-03-23&generation=2"
+    headers = {"Authorization": module.params["env_bearer_token"]}
 
     instanceId = module.params["instance_id"]
     if module.params["instance_ip"]:
         try:
-            floatingIps = service.list_floating_ips().get_result()['floating_ips']
-            instances = service.list_instances().get_result()['instances']
+            instances = requests.get(listInstanceUrl, headers=headers).json()['instances']
+            floatingIps = requests.get(floatingIpUrl, headers=headers).json()['floating_ips']
         except ApiException as e:
             print("List instances/floatingIp failed with status code " + str(e.code) + ": " + e.message)
         target = ""
@@ -83,24 +80,24 @@ def run_module():
             if target == "" :
                 if instance["primary_network_interface"]["primary_ipv4_address"] == module.params["instance_ip"] :
                     instanceId = instance["id"]
-                    # print(instance['id'], "\t",  instance['name'])
             elif instance["primary_network_interface"]["id"] == target :
                 instanceId = instance["id"]
-                # print(instance['id'], "\t",  instance['name'])
         if instanceId == "" :
             module.fail_json(msg=("instance not found"))
 
     try:
-        stopIns = service.create_instance_action(instance_id=instanceId, type=module.params["action_type"])
+        actionUri = "https://us-south-stage01.iaasdev.cloud.ibm.com/v1/instances/" + instanceId + "/actions?generation=2&version=2020-08-11"
+        reqBody = {"type": module.params["action_type"]}
+        stopIns = requests.post(actionUri, data=json.dumps(reqBody), headers=headers)
     except ApiException as e:
         module.fail_json(msg=("Failed to get expected response"))
         print("stop instances failed with status code " + str(e.code) + ": " + e.message)
 
     #print(stopIns)
 
-    if stopIns.get_status_code() != 201:
+    if stopIns.status_code != 201:
         module.fail_json(msg=("Failed to get expected response"))
-    module.exit_json(**stopIns.get_result())
+    module.exit_json(**stopIns.json())
 
 def main():
     run_module()
